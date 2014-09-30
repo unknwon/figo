@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"github.com/codegangsta/cli"
-	"github.com/fsouza/go-dockerclient"
 
-	"github.com/Unknwon/figo/modules/core"
 	"github.com/Unknwon/figo/modules/log"
 )
 
@@ -23,11 +21,12 @@ contents of its build directory, you can run "fig build" to rebuild it.`,
 }
 
 func runBuild(ctx *cli.Context) {
-	// FIXME: init command context.
-	endpoint := "unix:///var/run/docker.sock"
-	client, _ := docker.NewClient(endpoint)
-	pro := core.NewProject("hi", []*core.Service{}, client)
-	if err := pro.Build([]string{}, false); err != nil {
+	pro, err := Setup(ctx)
+	if err != nil {
+		log.Fatal("%v", err)
+	}
+	// endpoint := "unix:///var/run/docker.sock"
+	if err := pro.Build(ctx.Args(), ctx.Bool("no-cache")); err != nil {
 		log.Fatal("Fail to build project: %v", err)
 	}
 }

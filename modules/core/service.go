@@ -1,16 +1,19 @@
 package core
 
 import (
-	"github.com/Unknwon/figo/modules/log"
 	"github.com/fsouza/go-dockerclient"
+
+	"github.com/Unknwon/figo/modules/log"
 )
+
+type Options map[string]map[string]interface{}
 
 type Service struct {
 	name    string
 	client  *docker.Client
 	project string
 	links   map[string]string
-	options map[string]interface{}
+	options Options
 }
 
 func NewService(
@@ -18,7 +21,7 @@ func NewService(
 	client *docker.Client,
 	project string,
 	links map[string]string,
-	options map[string]interface{}) *Service {
+	options Options) *Service {
 	return &Service{
 		name:    name,
 		client:  client,

@@ -15,6 +15,7 @@ const (
 )
 
 var (
+	Verbose     = true
 	NonColor    bool
 	ShowDepth   bool
 	CallerDepth = 2
@@ -36,6 +37,10 @@ const (
 )
 
 func Print(level int, format string, args ...interface{}) {
+	if !Verbose && level < WARNING {
+		return
+	}
+
 	var depthInfo string
 	if ShowDepth {
 		pc, file, line, ok := runtime.Caller(CallerDepth)
