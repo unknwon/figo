@@ -27,3 +27,11 @@ type ConfigurationError struct {
 func (e ConfigurationError) Error() string {
 	return e.Msg
 }
+
+type DependencyError struct {
+	Msg string
+}
+
+func (e DependencyError) Error() string {
+	return e.Msg
+}

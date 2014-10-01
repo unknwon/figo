@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"path"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/Unknwon/com"
 	"github.com/codegangsta/cli"
@@ -58,11 +60,13 @@ func GetClient(verbose bool) (*docker.Client, error) {
 	if verbose {
 		log.Info("Figo version: %s", base.AppVer)
 		log.Info("Docker host: %s", baseUrl)
-		// env, err := client.Version()
-		// if err != nil {
-		// 	log.Fatal("Fail to get docker version: %v", err)
-		// }
-		// log.Info("Docker version: %s", env)
+		env, err := client.Version()
+		if err != nil {
+			log.Fatal("Fail to get docker version: %v", err)
+		}
+		envs := []string(*env)
+		sort.Strings(envs)
+		log.Info("Docker version:\n%s", strings.Join(envs, "\n"))
 	}
 	return client, nil
 }

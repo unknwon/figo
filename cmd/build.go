@@ -25,7 +25,6 @@ func runBuild(ctx *cli.Context) {
 	if err != nil {
 		log.Fatal("%v", err)
 	}
-	// endpoint := "unix:///var/run/docker.sock"
 	if err := pro.Build(ctx.Args(), ctx.Bool("no-cache")); err != nil {
 		log.Fatal("Fail to build project: %v", err)
 	}

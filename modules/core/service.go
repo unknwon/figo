@@ -1,6 +1,14 @@
 package core
 
 import (
+	"archive/tar"
+	"bytes"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"path"
+
+	"github.com/Unknwon/com"
 	"github.com/fsouza/go-dockerclient"
 
 	"github.com/Unknwon/figo/modules/log"
@@ -9,24 +17,25 @@ import (
 type Options map[string]map[string]interface{}
 
 type Service struct {
-	name    string
-	client  *docker.Client
-	project string
-	links   map[string]string
-	options Options
+	name           string
+	client         *docker.Client
+	project        string
+	links, volumes map[string]string
+	options        map[string]interface{}
 }
 
 func NewService(
 	name string,
 	client *docker.Client,
 	project string,
-	links map[string]string,
-	options Options) *Service {
+	links, volumes map[string]string,
+	options map[string]interface{}) *Service {
 	return &Service{
 		name:    name,
 		client:  client,
 		project: project,
 		links:   links,
+		volumes: volumes,
 		options: options,
 	}
 }
@@ -52,13 +61,35 @@ func (s *Service) buildTagName() string {
 func (s *Service) Build(noCache bool) (string, error) {
 	log.Info("Building %s...", s.name)
 
-	// FIXME: Remote, InputStream, OutputStream
+	// FIXME: OutputStream
+	dockerfile := path.Join(s.options["build"].(string), "Dockerfile")
+	if !com.IsFile(dockerfile) {
+		return "", fmt.Errorf("build dockerfile does not exist or is not a file: %s", dockerfile)
+	}
+
+	file, err := os.Open(dockerfile)
+	if err != nil {
+		return "", fmt.Errorf("fail to open dockerfile: %v", err)
+	}
+	data, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("fail to read dockerfile: %v", err)
+	}
+	fi, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("fail to get dockerfile info: %v", err)
+	}
+	inputbuf := bytes.NewBuffer(nil)
+	tr := tar.NewWriter(inputbuf)
+	tr.WriteHeader(&tar.Header{Name: "Dockerfile", Size: int64(len(data)), ModTime: fi.ModTime()})
+	tr.Write(data)
+	tr.Close()
 	opts := docker.BuildImageOptions{
 		Name:           s.buildTagName(),
 		NoCache:        noCache,
 		RmTmpContainer: true,
-		InputStream:    nil,
-		OutputStream:   nil,
+		InputStream:    inputbuf,
+		OutputStream:   os.Stdout,
 	}
 	if err := s.client.BuildImage(opts); err != nil {
 		return "", err
