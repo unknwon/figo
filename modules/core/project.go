@@ -71,12 +71,17 @@ func visit(dicts, unmarked Options, marked map[string]bool, sorted *[]map[string
 		}
 		delete(marked, name)
 		delete(unmarked, name)
-		*sorted = append((*sorted)[:1], (*sorted)[:]...)
-		(*sorted)[0] = dict
+
+		// FIXME: no fucking idea why Fig starts with first one, should reverse list first in Go
+		// since we did Topological sort.
+		// *sorted = append((*sorted)[:1], (*sorted)[:]...)
+		// (*sorted)[0] = dict
+		*sorted = append(*sorted, dict)
 	}
 	return nil
 }
 
+// SortServiceDicts does Topological sort for services.
 func SortServiceDicts(dicts Options) ([]map[string]interface{}, error) {
 	unmarked := make(Options)
 	for k, v := range dicts {
@@ -85,23 +90,24 @@ func SortServiceDicts(dicts Options) ([]map[string]interface{}, error) {
 	marked := make(map[string]bool)
 	sorted := make([]map[string]interface{}, 0, len(dicts))
 
-	for _, dict := range dicts {
+	for _, dict := range unmarked {
 		if err := visit(dicts, unmarked, marked, &sorted, dict); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("fail to sort services: %v", err)
 		}
 	}
 	return sorted, nil
 }
 
-func (p *Project) GetLinks(dict map[string]interface{}) map[string]string {
-	links := make(map[string]string)
+// GetLinks returns links from dict.
+func (p *Project) GetLinks(dict map[string]interface{}) (Links, error) {
+	links := make(Links)
 	var (
 		linkStr     string
 		serviceName string
 		linkName    string
 	)
-	if rawLinks, ok := dict["links"]; ok {
-		for _, link := range rawLinks.([]interface{}) {
+	if _, ok := dict["links"]; ok {
+		for _, link := range dict["links"].([]interface{}) {
 			linkStr = link.(string)
 			if strings.Contains(linkStr, ":") {
 				infos := strings.SplitN(linkStr, ":", 2)
@@ -110,43 +116,66 @@ func (p *Project) GetLinks(dict map[string]interface{}) map[string]string {
 			} else {
 				serviceName = linkStr
 			}
-			// FIXME: get_service
-			links[serviceName] = linkName
+			s, err := p.GetService(serviceName)
+			if err != nil {
+				return nil, fmt.Errorf("Service \"%s\" has a link to service \"%s\" which does not exist.", dict["name"], serviceName)
+			}
+			links[serviceName] = Link{s, linkName}
 		}
 		delete(dict, "links")
 	}
-	return links
+	return links, nil
 }
 
-func (p *Project) GetVolumesFrom(dict map[string]interface{}) map[string]string {
-	volumes := make(map[string]string)
-	if rawVolumes, ok := dict["volumes_from"]; ok {
-		for _, volume := range rawVolumes.([]interface{}) {
+// GetVolumesFrom returns volumes_from from dict.
+func (p *Project) GetVolumesFrom(dict map[string]interface{}) (Volumes, error) {
+	volumes := make(Volumes)
+	if _, ok := dict["volumes_from"]; ok {
+		for _, volume := range dict["volumes_from"].([]interface{}) {
 			volumeName := volume.(string)
-			// FIXME: get_service
-			// FIXME: Container.from_id(self.client, volume_name)
-			volumes[volumeName] = ""
+			service, err := p.GetService(volumeName)
+			if err != nil {
+				if _, ok := err.(NoSuchService); ok {
+					container, err := NewContainerFromId(p.client, volumeName)
+					if err != nil {
+						return nil, ConfigurationError{fmt.Sprintf("Service \"%s\" mounts volumes from \"%s\", which is not the name of a service or container", dict["name"], volumeName)}
+					}
+					volumes[volumeName] = container
+				}
+				return nil, fmt.Errorf("fail to get service(%s) volume from(%s): %v", dict["name"], volumeName, err)
+			}
+			volumes[volumeName] = service
 		}
 		delete(dict, "volumes_from")
 	}
-	return volumes
+	return volumes, nil
 }
 
+// NewProjectFromDicts creates new project from a list of dicts representing services.
 func NewProjectFromDicts(name string, dicts Options, client *docker.Client) (*Project, error) {
 	pro := NewProject(name, []*Service{}, client)
 	sorted, err := SortServiceDicts(dicts)
 	if err != nil {
 		return nil, err
 	}
+
+	// dbgutil.FormatDisplay("sorted", sorted)
 	for _, dict := range sorted {
 		serviceName := dict["name"].(string)
-		links := pro.GetLinks(dict)
-		volumes := pro.GetVolumesFrom(dict)
+		links, err := pro.GetLinks(dict)
+		if err != nil {
+			return nil, err
+		}
+		volumes, err := pro.GetVolumesFrom(dict)
+		if err != nil {
+			return nil, err
+		}
 		pro.services = append(pro.services, NewService(serviceName, client, name, links, volumes, dict))
 	}
 	return pro, nil
 }
 
+// NewProjectFromConfig creates new project from configuration.
 func NewProjectFromConfig(name string, config Options, client *docker.Client) (*Project, error) {
 	dicts := make(Options)
 	for name, service := range config {
@@ -205,20 +234,25 @@ func (p *Project) injectLinks(services []*Service) (_ []*Service, err error) {
 // reordering as needed to resolve links.
 //
 // It returns NoSuchService if any of the named services do not exist.
+// FIXME: may run into infinite loop if project has no service.
 func (p *Project) GetServices(entries []string, includeLinks bool) (_ []*Service, err error) {
 	// Return all services.
 	if entries == nil || len(entries) == 0 {
 		return p.GetServices(p.ListServicesNames(), includeLinks)
 	}
 
-	services := make([]*Service, len(entries))
+	unsorted := make([]*Service, len(entries))
 	for i, name := range entries {
 		s, err := p.GetService(name)
 		if err != nil {
 			return nil, err
 		}
-		services[i] = s
+		unsorted[i] = s
 	}
+
+	// FIXME: unsorted already contains needed services, why this again?
+	// Fig: fig/project.py: Project.get_services
+	services := unsorted
 
 	if includeLinks {
 		services, err = p.injectLinks(services)
@@ -238,6 +272,7 @@ func (p *Project) GetServices(entries []string, includeLinks bool) (_ []*Service
 	return uniques, nil
 }
 
+// Build builds services of project.
 func (p *Project) Build(entries []string, noCache bool) error {
 	services, err := p.GetServices(entries, false)
 	if err != nil {

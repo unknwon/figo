@@ -17,14 +17,16 @@ contents of its build directory, you can run "fig build" to rebuild it.`,
 	Action: runBuild,
 	Flags: []cli.Flag{
 		cli.BoolFlag{"no-cache", "Do not use cache when building the image", ""},
+		cli.BoolFlag{"verbose, v", "Show more output", ""},
 	},
 }
 
 func runBuild(ctx *cli.Context) {
-	pro, err := Setup(ctx)
+	pro, err := setup(ctx)
 	if err != nil {
 		log.Fatal("%v", err)
 	}
+
 	if err := pro.Build(ctx.Args(), ctx.Bool("no-cache")); err != nil {
 		log.Fatal("Fail to build project: %v", err)
 	}

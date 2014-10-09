@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -18,28 +19,12 @@ import (
 	"github.com/Unknwon/figo/modules/log"
 )
 
-// GetProjectName returns given project name,
-// if it is empty, then guesses it by config file path,
-// otherwise, just returns 'defualt'.
-func GetProjectName(configPath, name string) string {
-	// TODO: normalize_name
-	if len(name) > 0 {
-		return name
+// GetConfig loads and returns project configuration.
+func GetConfig(cfgPath string) (core.Options, error) {
+	if !com.IsExist(cfgPath) {
+		return nil, core.FigFileNotFound{cfgPath}
 	}
-	absPath, _ := filepath.Abs(configPath)
-	name = path.Base(path.Dir(absPath))
-	if len(name) > 0 {
-		return name
-	}
-	return "default"
-}
-
-// GetConfig loads and returns fig configuration.
-func GetConfig(configPath string) (core.Options, error) {
-	if !com.IsExist(configPath) {
-		return nil, core.FigFileNotFound{configPath}
-	}
-	data, err := ioutil.ReadFile(configPath)
+	data, err := ioutil.ReadFile(cfgPath)
 	if err != nil {
 		return nil, err
 	}
@@ -51,11 +36,12 @@ func GetConfig(configPath string) (core.Options, error) {
 	return config, nil
 }
 
+// GetClient returns a new Docker client.
 func GetClient(verbose bool) (*docker.Client, error) {
 	baseUrl := base.DockerUrl()
 	client, err := docker.NewClient(baseUrl)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fail to create new client: %v", err)
 	}
 	if verbose {
 		log.Info("Figo version: %s", base.AppVer)
@@ -71,8 +57,27 @@ func GetClient(verbose bool) (*docker.Client, error) {
 	return client, nil
 }
 
-func GetProject(name, configPath string, verbose bool) (*core.Project, error) {
-	config, err := GetConfig(configPath)
+var normalCharPattern = regexp.MustCompile("[a-zA-Z0-9]+")
+
+// GetProjectName returns given project name,
+// if it is empty, then guesses it by config file path,
+// otherwise, just returns 'defualt'.
+func GetProjectName(cfgPath, name string) string {
+	name = normalCharPattern.FindString(name)
+	if len(name) > 0 {
+		return name
+	}
+	absPath, _ := filepath.Abs(cfgPath)
+	name = path.Base(path.Dir(absPath))
+	if len(name) > 0 {
+		return name
+	}
+	return "default"
+}
+
+// GetProject initializes and returns a new project.
+func GetProject(name, cfgPath string, verbose bool) (*core.Project, error) {
+	config, err := GetConfig(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("fail to parse config file: %v", err)
 	}
@@ -80,10 +85,10 @@ func GetProject(name, configPath string, verbose bool) (*core.Project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fail to create new client: %v", err)
 	}
-	return core.NewProjectFromConfig(GetProjectName(configPath, name), config, client)
+	return core.NewProjectFromConfig(GetProjectName(cfgPath, name), config, client)
 }
 
-func Setup(ctx *cli.Context) (*core.Project, error) {
-	log.Verbose = ctx.GlobalBool("verbose")
+func setup(ctx *cli.Context) (*core.Project, error) {
+	log.Verbose = ctx.Bool("verbose")
 	return GetProject(ctx.GlobalString("project-name"), ctx.GlobalString("file"), log.Verbose)
 }
