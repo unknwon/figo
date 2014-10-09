@@ -124,3 +124,33 @@ func (s *Service) Build(noCache bool) (string, error) {
 
 	return imageId, nil
 }
+
+func (s *Service) Containers(stopped, oneOff bool) ([]*Container, error) {
+	return nil, nil
+}
+
+func (s *Service) StartContainer(c, intermediate *Container) error {
+	return nil
+}
+
+func (s *Service) StartContainerIfStopped(c *Container) error {
+	if c.IsRunning() {
+		return nil
+	}
+	log.Info("Starting %s...", c.Name())
+	return s.StartContainer(c, nil)
+}
+
+func (s *Service) Start() error {
+	containers, err := s.Containers(true, false)
+	if err != nil {
+		return fmt.Errorf("fail to get containers: %v", err)
+	}
+
+	for _, c := range containers {
+		if err = s.StartContainerIfStopped(c); err != nil {
+			return fmt.Errorf("fail to start container(%s): %v", c.Name(), err)
+		}
+	}
+	return nil
+}

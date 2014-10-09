@@ -272,7 +272,6 @@ func (p *Project) GetServices(entries []string, includeLinks bool) (_ []*Service
 	return uniques, nil
 }
 
-// Build builds services of project.
 func (p *Project) Build(entries []string, noCache bool) error {
 	services, err := p.GetServices(entries, false)
 	if err != nil {
@@ -285,6 +284,20 @@ func (p *Project) Build(entries []string, noCache bool) error {
 			}
 		} else {
 			log.Info("%s uses an image, skipping", s.name)
+		}
+	}
+	return nil
+}
+
+func (p *Project) Start(entries []string) error {
+	services, err := p.GetServices(entries, false)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	for _, s := range services {
+		if err = s.Start(); err != nil {
+			return fmt.Errorf("fail to start service(%s): %v", s.name, err)
 		}
 	}
 	return nil
