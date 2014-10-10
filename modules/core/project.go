@@ -296,6 +296,7 @@ func (p *Project) Start(entries []string) error {
 	}
 
 	for _, s := range services {
+		// TODO: 需要解析命令行参数成 map[string]string 形式传入
 		if err = s.Start(); err != nil {
 			return fmt.Errorf("fail to start service(%s): %v", s.name, err)
 		}

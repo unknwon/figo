@@ -125,11 +125,42 @@ func (s *Service) Build(noCache bool) (string, error) {
 	return imageId, nil
 }
 
+// HasApiContainer returns true if the container was created to fulfill this service.
+func (s *Service) HasApiContainer(apiContainer *docker.APIContainers, oneOff bool) bool {
+	name := base.GetApiContainerName(apiContainer)
+	if len(name) == 0 || !base.IsValidApiContainerName(name, oneOff) {
+		return false
+	}
+	projectName, serviceName, _ := base.ParseApiContainerName(name)
+	return projectName == s.project && serviceName == s.name
+}
+
+// Containers returns a list of containers belong to service.
 func (s *Service) Containers(stopped, oneOff bool) ([]*Container, error) {
+	apiContainers, err := s.client.ListContainers(docker.ListContainersOptions{All: stopped})
+	if err != nil {
+		return nil, fmt.Errorf("fail to list containers: %v", err)
+	}
+	containers := make([]*Container, 0, len(apiContainers))
+	for _, apiContainer := range apiContainers {
+		if s.HasApiContainer(&apiContainer, oneOff) {
+			containers = append(containers, NewContainerFromPs(s.client, &apiContainer))
+		}
+	}
+	return containers, nil
+}
+
+// CreateContainer creates a container for this service.
+// If the image doesn't exist, attempt to pull it.
+func (s *Service) CreateContainer(oneOff bool) (*Container, error) {
 	return nil, nil
 }
 
+// StartContainer starts a existing container.
 func (s *Service) StartContainer(c, intermediate *Container) error {
+	if c == nil {
+
+	}
 	return nil
 }
 
@@ -137,19 +168,20 @@ func (s *Service) StartContainerIfStopped(c *Container) error {
 	if c.IsRunning() {
 		return nil
 	}
-	log.Info("Starting %s...", c.Name())
+	log.Info("Starting %s...", c.Name)
 	return s.StartContainer(c, nil)
 }
 
 func (s *Service) Start() error {
 	containers, err := s.Containers(true, false)
 	if err != nil {
-		return fmt.Errorf("fail to get containers: %v", err)
+		return fmt.Errorf("fail to get containers(%s): %v", s.name, err)
 	}
 
+	// TODO
 	for _, c := range containers {
 		if err = s.StartContainerIfStopped(c); err != nil {
-			return fmt.Errorf("fail to start container(%s): %v", c.Name(), err)
+			return fmt.Errorf("fail to start container(%s): %v", c.Name, err)
 		}
 	}
 	return nil

@@ -9,7 +9,7 @@ import (
 	"github.com/Unknwon/figo/modules/base"
 )
 
-const APP_VER = "0.1.0.1008"
+const APP_VER = "0.1.0.1010"
 
 func init() {
 	base.AppVer = APP_VER

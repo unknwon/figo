@@ -8,8 +8,8 @@ import (
 
 var CmdStart = cli.Command{
 	Name:        "start",
-	Usage:       "Start existing containers.",
-	Description: `Start existing containers.`,
+	Usage:       "Start existing containers for a service",
+	Description: `Start existing containers for a service.`,
 	Action:      runStart,
 	Flags: []cli.Flag{
 		cli.BoolFlag{"verbose, v", "Show more output", ""},
@@ -22,7 +22,7 @@ func runStart(ctx *cli.Context) {
 		log.Fatal("%v", err)
 	}
 
-	if err := pro.Build(ctx.Args(), ctx.Bool("no-cache")); err != nil {
-		log.Fatal("Fail to build project: %v", err)
+	if err := pro.Start(ctx.Args()); err != nil {
+		log.Fatal("Fail to start project: %v", err)
 	}
 }
