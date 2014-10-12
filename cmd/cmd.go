@@ -22,7 +22,7 @@ import (
 // GetConfig loads and returns project configuration.
 func GetConfig(cfgPath string) (core.Options, error) {
 	if !com.IsExist(cfgPath) {
-		return nil, core.FigFileNotFound{cfgPath}
+		return nil, base.FigFileNotFound{cfgPath}
 	}
 	data, err := ioutil.ReadFile(cfgPath)
 	if err != nil {

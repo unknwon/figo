@@ -2,7 +2,10 @@ package core
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
+	"github.com/Unknwon/com"
 	"github.com/fsouza/go-dockerclient"
 
 	"github.com/Unknwon/figo/modules/base"
@@ -37,6 +40,52 @@ func NewContainerFromPs(client *docker.Client, apiContainer *docker.APIContainer
 		},
 		false,
 	}
+}
+
+func valOrNil(val interface{}) string {
+	if val == nil {
+		return ""
+	}
+	return val.(string)
+}
+
+func parseBool(str string) bool {
+	val, _ := strconv.ParseBool(str)
+	return val
+}
+
+// CreateContainer creates new container by given options.
+func CreateContainer(client *docker.Client, options map[string]interface{}) (*Container, error) {
+	// FIXME: many things need to be done.
+	// https://docs.docker.com/reference/commandline/cli/#run
+	createOptions := docker.CreateContainerOptions{
+		Name: options["name"].(string),
+		Config: &docker.Config{
+			Hostname:     valOrNil(options["hostname"]),
+			Domainname:   valOrNil(options["domainname"]),
+			User:         valOrNil(options["user"]),
+			Memory:       com.StrTo(valOrNil(options["memory"])).MustInt64(), // FIXME: parse unit?
+			CpuShares:    com.StrTo(valOrNil(options["cpu-shares"])).MustInt64(),
+			CpuSet:       valOrNil(options["cpuset"]),
+			AttachStdin:  strings.Contains(valOrNil(options["attach"]), "STDIN"),
+			AttachStdout: strings.Contains(valOrNil(options["attach"]), "STDOUT"),
+			AttachStderr: strings.Contains(valOrNil(options["attach"]), "STDERR"),
+			Tty:          parseBool(valOrNil(options["tty"])),
+			OpenStdin:    parseBool(valOrNil(options["interactive"])),
+			// Env:             valOrNil(options["env"]),
+			// Dns:             valOrNil(options["dns"]),
+			VolumesFrom: valOrNil(options["volumes-from"]),
+			WorkingDir:  valOrNil(options["workdir"]),
+			// Entrypoint:      valOrNil(options["entrypoint"]),
+		},
+	}
+
+	// TODO: PortSpecs, ExposedPorts, Volumes
+	c, err := client.CreateContainer(createOptions)
+	if err != nil {
+		return nil, err
+	}
+	return NewContainerFromId(client, c.ID)
 }
 
 // Inspect inspects container information.

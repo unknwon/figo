@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 
 	"github.com/Unknwon/com"
 	"github.com/fsouza/go-dockerclient"
@@ -128,10 +129,10 @@ func (s *Service) Build(noCache bool) (string, error) {
 // HasApiContainer returns true if the container was created to fulfill this service.
 func (s *Service) HasApiContainer(apiContainer *docker.APIContainers, oneOff bool) bool {
 	name := base.GetApiContainerName(apiContainer)
-	if len(name) == 0 || !base.IsValidApiContainerName(name, oneOff) {
+	if len(name) == 0 || !base.IsValidContainerName(name, oneOff) {
 		return false
 	}
-	projectName, serviceName, _ := base.ParseApiContainerName(name)
+	projectName, serviceName, _ := base.ParseContainerName(name)
 	return projectName == s.project && serviceName == s.name
 }
 
@@ -150,29 +151,181 @@ func (s *Service) Containers(stopped, oneOff bool) ([]*Container, error) {
 	return containers, nil
 }
 
+func (s *Service) nextContainerNumber(containers []*Container) int {
+	max := 0
+	for _, c := range containers {
+		_, _, num := base.ParseContainerName(c.Name)
+		if num > max {
+			max = num
+		}
+	}
+	return max + 1
+}
+
+func (s *Service) nextContainerName(containers []*Container, oneOff bool) string {
+	bits := []string{s.project, s.name}
+	if oneOff {
+		bits = append(bits, "run")
+	}
+	bits = append(bits, com.ToStr(s.nextContainerNumber(containers)))
+	return strings.Join(bits, "_")
+}
+
+func (s *Service) getContainerCreateOptions(oneOff bool, options map[string]string) (map[string]interface{}, error) {
+	containerOptions := map[string]interface{}{}
+	for _, k := range base.DockerConfigKeys {
+		if v, ok := s.options[k]; ok {
+			containerOptions[k] = v.(string)
+		}
+	}
+	for k, v := range options {
+		containerOptions[k] = v
+	}
+
+	containers, err := s.Containers(true, oneOff)
+	if err != nil {
+		return nil, err
+	}
+	containerOptions["name"] = s.nextContainerName(containers, oneOff)
+
+	// If a qualified hostname was given, split it into an
+	// unqualified hostname and a domainname unless domainname
+	// was also given explicitly. This matches the behavior of
+	// the official Docker CLI in that scenario.
+	if containerOptions["hostname"] != nil &&
+		strings.Contains(containerOptions["hostname"].(string), ".") &&
+		containerOptions["domainname"] == nil {
+		infos := strings.Split(containerOptions["hostname"].(string), ".")
+		containerOptions["hostname"] = infos[0]
+		containerOptions["domainname"] = infos[2]
+	}
+
+	// FIXME: what's the form of 'ports' and 'expose' arguments, space-separate?
+	if containerOptions["ports"] != nil ||
+		s.options["expose"] != nil {
+		oldPorts := []string{}
+		if containerOptions["ports"] != nil {
+			oldPorts = strings.Split(containerOptions["ports"].(string), " ")
+		}
+		oldExposes := []string{}
+		if s.options["expose"] != nil {
+			oldExposes = strings.Split(s.options["ports"].(string), " ")
+		}
+
+		ports := make([]interface{}, 0)
+		allPorts := append(oldPorts, oldExposes...)
+		for _, rawPort := range allPorts {
+			var port interface{}
+			if strings.Contains(rawPort, ":") {
+				infos := strings.Split(rawPort, ":")
+				rawPort = infos[len(infos)-1]
+				port = rawPort
+			}
+			if strings.Contains(rawPort, "/") {
+				port = strings.Split(rawPort, "/")
+			}
+			ports = append(ports, port)
+		}
+		containerOptions["ports"] = ports
+	}
+
+	if containerOptions["volumes"] != nil {
+		containerOptions["volumes"], err = base.ParseVolumeSpec(containerOptions["volumes"].(string))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if containerOptions["environment"] != nil {
+		// FIXME: what's the form of 'environment' argument?
+		log.Warn("container config option 'environment' not implemented yet")
+	}
+
+	if s.CanBeBuilt() {
+		apiImages, err := s.client.ListImages(true)
+		if err != nil {
+			return nil, fmt.Errorf("fail to list images: %v", err)
+		}
+		tagName := s.buildTagName()
+		hasFoundTag := false
+	SEARCH_TAG:
+		for _, apiImage := range apiImages {
+			for _, repoTag := range apiImage.RepoTags {
+				if repoTag == tagName {
+					hasFoundTag = true
+					break SEARCH_TAG
+				}
+			}
+		}
+		if !hasFoundTag {
+			if _, err = s.Build(false); err != nil {
+				return nil, fmt.Errorf("fail to build service: %v", err)
+			}
+		}
+		containerOptions["image"] = tagName
+	}
+
+	// Delete options which are only used when starting
+	for _, key := range []string{"privileged", "net", "dns"} {
+		delete(containerOptions, key)
+	}
+
+	return containerOptions, nil
+}
+
 // CreateContainer creates a container for this service.
 // If the image doesn't exist, attempt to pull it.
-func (s *Service) CreateContainer(oneOff bool) (*Container, error) {
-	return nil, nil
+func (s *Service) CreateContainer(oneOff bool, options map[string]string) (*Container, error) {
+	containerOptions, err := s.getContainerCreateOptions(oneOff, options)
+	if err != nil {
+		return nil, err
+	}
+	c, err := CreateContainer(s.client, containerOptions)
+	if err != nil {
+		if err == docker.ErrNoSuchImage {
+			log.Info("Pulling image %s...", containerOptions["image"])
+			if err = s.client.PullImage(docker.PullImageOptions{Repository: containerOptions["image"].(string)},
+				docker.AuthConfiguration{}); err != nil {
+				return nil, err
+			}
+			c, err = CreateContainer(s.client, containerOptions)
+		}
+	}
+	return c, err
 }
 
 // StartContainer starts a existing container.
-func (s *Service) StartContainer(c, intermediate *Container) error {
+func (s *Service) StartContainer(c, intermediate *Container, options map[string]string) (err error) {
 	if c == nil {
-
+		c, err = s.CreateContainer(false, options)
+		if err != nil {
+			return err
+		}
 	}
+
+	startOptions := map[string]interface{}{}
+	for k, v := range s.options {
+		startOptions[k] = v
+	}
+	for k, v := range options {
+		startOptions[k] = v
+	}
+
+	// TODO: NEXT
+	// https://gowalker.org/github.com/fsouza/go-dockerclient#HostConfig
 	return nil
 }
 
-func (s *Service) StartContainerIfStopped(c *Container) error {
+func (s *Service) StartContainerIfStopped(c *Container, options map[string]string) error {
 	if c.IsRunning() {
 		return nil
 	}
+
 	log.Info("Starting %s...", c.Name)
-	return s.StartContainer(c, nil)
+	return s.StartContainer(c, nil, options)
 }
 
-func (s *Service) Start() error {
+func (s *Service) Start(options map[string]string) error {
 	containers, err := s.Containers(true, false)
 	if err != nil {
 		return fmt.Errorf("fail to get containers(%s): %v", s.name, err)
@@ -180,7 +333,7 @@ func (s *Service) Start() error {
 
 	// TODO
 	for _, c := range containers {
-		if err = s.StartContainerIfStopped(c); err != nil {
+		if err = s.StartContainerIfStopped(c, options); err != nil {
 			return fmt.Errorf("fail to start container(%s): %v", c.Name, err)
 		}
 	}

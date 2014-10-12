@@ -6,6 +6,7 @@ import (
 
 	"github.com/fsouza/go-dockerclient"
 
+	"github.com/Unknwon/figo/modules/base"
 	"github.com/Unknwon/figo/modules/log"
 )
 
@@ -38,12 +39,12 @@ func visit(dicts, unmarked Options, marked map[string]bool, sorted *[]map[string
 	name := dict["name"].(string)
 	if marked[name] {
 		if links, ok := dict["links"]; ok && in(links.([]interface{}), name) {
-			return DependencyError{fmt.Sprintf("A service can not link to itself: %s", name)}
+			return base.DependencyError{fmt.Sprintf("A service can not link to itself: %s", name)}
 		}
 		if links, ok := dict["volumes_from"]; ok && in(links.([]interface{}), name) {
-			return DependencyError{fmt.Sprintf("A service can not mount itself as volume: %s", name)}
+			return base.DependencyError{fmt.Sprintf("A service can not mount itself as volume: %s", name)}
 		}
-		return DependencyError{fmt.Sprintf("Circular import found: %s", name)}
+		return base.DependencyError{fmt.Sprintf("Circular import found: %s", name)}
 	}
 	if _, ok := unmarked[name]; ok {
 		marked[name] = true
@@ -51,7 +52,7 @@ func visit(dicts, unmarked Options, marked map[string]bool, sorted *[]map[string
 			for _, link := range links.([]interface{}) {
 				dict := dicts[strings.Split(link.(string), ":")[0]]
 				if dict == nil {
-					return DependencyError{fmt.Sprintf("Link service does not exist: %s", link)}
+					return base.DependencyError{fmt.Sprintf("Link service does not exist: %s", link)}
 				}
 				if err := visit(dicts, unmarked, marked, sorted, dict); err != nil {
 					return err
@@ -62,7 +63,7 @@ func visit(dicts, unmarked Options, marked map[string]bool, sorted *[]map[string
 			for _, link := range links.([]interface{}) {
 				dict := dicts[strings.Split(link.(string), ":")[0]]
 				if dict == nil {
-					return DependencyError{fmt.Sprintf("Link service does not exist: %s", link)}
+					return base.DependencyError{fmt.Sprintf("Link service does not exist: %s", link)}
 				}
 				if err := visit(dicts, unmarked, marked, sorted, dict); err != nil {
 					return err
@@ -135,10 +136,10 @@ func (p *Project) GetVolumesFrom(dict map[string]interface{}) (Volumes, error) {
 			volumeName := volume.(string)
 			service, err := p.GetService(volumeName)
 			if err != nil {
-				if _, ok := err.(NoSuchService); ok {
+				if _, ok := err.(base.NoSuchService); ok {
 					container, err := NewContainerFromId(p.client, volumeName)
 					if err != nil {
-						return nil, ConfigurationError{fmt.Sprintf("Service \"%s\" mounts volumes from \"%s\", which is not the name of a service or container", dict["name"], volumeName)}
+						return nil, base.ConfigurationError{fmt.Sprintf("Service \"%s\" mounts volumes from \"%s\", which is not the name of a service or container", dict["name"], volumeName)}
 					}
 					volumes[volumeName] = container
 				}
@@ -180,7 +181,7 @@ func NewProjectFromConfig(name string, config Options, client *docker.Client) (*
 	dicts := make(Options)
 	for name, service := range config {
 		if service == nil {
-			return nil, ConfigurationError{fmt.Sprintf("Service \"%s\" doesn't have any configuration options. All top level keys in your fig.yml must map to a dictionary of configuration options", name)}
+			return nil, base.ConfigurationError{fmt.Sprintf("Service \"%s\" doesn't have any configuration options. All top level keys in your fig.yml must map to a dictionary of configuration options", name)}
 		}
 		service["name"] = name
 		dicts[name] = service
@@ -205,7 +206,7 @@ func (p *Project) GetService(name string) (*Service, error) {
 			return s, nil
 		}
 	}
-	return nil, NoSuchService{name}
+	return nil, base.NoSuchService{name}
 }
 
 func (p *Project) injectLinks(services []*Service) (_ []*Service, err error) {
@@ -289,15 +290,16 @@ func (p *Project) Build(entries []string, noCache bool) error {
 	return nil
 }
 
-func (p *Project) Start(entries []string) error {
+func (p *Project) Start(args []string) error {
+	entries, options := base.ParseArgs(args)
+
 	services, err := p.GetServices(entries, false)
 	if err != nil {
 		return fmt.Errorf("fail to get services: %v", err)
 	}
 
 	for _, s := range services {
-		// TODO: 需要解析命令行参数成 map[string]string 形式传入
-		if err = s.Start(); err != nil {
+		if err = s.Start(options); err != nil {
 			return fmt.Errorf("fail to start service(%s): %v", s.name, err)
 		}
 	}
