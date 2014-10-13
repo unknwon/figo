@@ -311,9 +311,28 @@ func (s *Service) StartContainer(c, intermediate *Container, options map[string]
 		startOptions[k] = v
 	}
 
-	// TODO: NEXT
+	// FIXME: start container config
 	// https://gowalker.org/github.com/fsouza/go-dockerclient#HostConfig
-	return nil
+	//  volume_bindings = dict(
+	//     build_volume_binding(parse_volume_spec(volume))
+	//     for volume in options.get('volumes') or []
+	//     if ':' in volume)
+
+	// privileged = options.get('privileged', False)
+	// net = options.get('net', 'bridge')
+	// dns = options.get('dns', None)
+
+	// container.start(
+	//             links=self._get_links(link_to_self=options.get('one_off', False)),
+	//             port_bindings=ports,
+	//             binds=volume_bindings,
+	//             volumes_from=self._get_volumes_from(intermediate_container),
+	//             privileged=privileged,
+	//             network_mode=net,
+	//             dns=dns,
+	//         )
+	hostConfig := &docker.HostConfig{}
+	return s.client.StartContainer(c.ID, hostConfig)
 }
 
 func (s *Service) StartContainerIfStopped(c *Container, options map[string]string) error {
@@ -331,7 +350,6 @@ func (s *Service) Start(options map[string]string) error {
 		return fmt.Errorf("fail to get containers(%s): %v", s.name, err)
 	}
 
-	// TODO
 	for _, c := range containers {
 		if err = s.StartContainerIfStopped(c, options); err != nil {
 			return fmt.Errorf("fail to start container(%s): %v", c.Name, err)
