@@ -305,3 +305,88 @@ func (p *Project) Start(args []string) error {
 	}
 	return nil
 }
+
+func (p *Project) Up(entries []string, startLinks, recreate bool) error {
+	services, err := p.GetServices(entries, startLinks)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	var (
+		runningContainers = make([]*Container, 0, 10)
+		containers        []*Container
+	)
+	for _, service := range services {
+		if recreate {
+			containers, err = service.RecreateContainers()
+		} else {
+			containers, err = service.StartOrCreateContainers()
+		}
+		if err != nil {
+			return fmt.Errorf("fail to start or create containers(%s): %v", service.name, err)
+		}
+		runningContainers = append(runningContainers, containers...)
+	}
+
+	return nil
+}
+
+func (p *Project) Kill(entries []string) error {
+	services, err := p.GetServices(entries, false)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	for i := len(services) - 1; i >= 0; i-- {
+		if err = services[i].Kill(map[string]string{}); err != nil {
+			return fmt.Errorf("fail to kill service(%s): %v", services[i].name, err)
+		}
+	}
+
+	return nil
+}
+
+func (p *Project) Pull(entries []string, insecure bool) error {
+	services, err := p.GetServices(entries, false)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	for _, service := range services {
+		if err = service.Pull(insecure); err != nil {
+			return fmt.Errorf("fail to pull service(%s): %v", service.name, err)
+		}
+	}
+
+	return nil
+}
+
+func (p *Project) Restart(entries []string) error {
+	services, err := p.GetServices(entries, false)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	for _, service := range services {
+		if err = service.Restart(); err != nil {
+			return fmt.Errorf("fail to restart service(%s): %v", service.name, err)
+		}
+	}
+
+	return nil
+}
+
+func (p *Project) Stop(entries []string) error {
+	services, err := p.GetServices(entries, false)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	for i := len(services) - 1; i >= 0; i-- {
+		if err = services[i].Stop(); err != nil {
+			return fmt.Errorf("fail to stop service(%s): %v", services[i].name, err)
+		}
+	}
+
+	return nil
+}

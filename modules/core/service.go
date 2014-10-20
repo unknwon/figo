@@ -357,3 +357,178 @@ func (s *Service) Start(options map[string]string) error {
 	}
 	return nil
 }
+
+// Recreate a container. An intermediate container is created so that
+// the new container has the same name, while still supporting
+// `volumes-from` the original container.
+func (s *Service) RecreateContainer(c *Container, options map[string]string) (*Container, error) {
+	if err := c.Stop(); err != nil {
+		_, ok1 := err.(*docker.NoSuchContainer)
+		_, ok2 := err.(*docker.ContainerNotRunning)
+		if !ok1 && !ok2 {
+			return nil, fmt.Errorf("fail to stop container(%s): %v", c.Name, err)
+		}
+	}
+
+	intermediate, err := CreateContainer(s.client, map[string]interface{}{})
+	if err != nil {
+		return nil, fmt.Errorf("fail to create container(%s): %v", c.Name, err)
+	}
+	if err = intermediate.Start(); err != nil {
+		return nil, fmt.Errorf("fail to start container(%s): %v", c.Name, err)
+	}
+	if _, err = intermediate.Wait(); err != nil {
+		return nil, fmt.Errorf("fail to wait container(%s): %v", c.Name, err)
+	}
+	// FIXME: container.remove() ???
+	// options = dict(override_options)
+
+	container, err := s.CreateContainer(false, options)
+	if err != nil {
+		return nil, fmt.Errorf("fail to create container(%s): %v", c.Name, err)
+	}
+	if err = s.StartContainer(container, intermediate, options); err != nil {
+		return nil, fmt.Errorf("fail to start container(%s): %v", c.Name, err)
+	}
+
+	// intermediate_container.remove() ???
+
+	return container, nil
+}
+
+// If a container for this service doesn't exist, create and start one. If there are
+// any, stop them, create+start new ones, and remove the old containers.
+func (s *Service) RecreateContainers() ([]*Container, error) {
+	containers, err := s.Containers(true, false)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get containers(%s): %v", s.name, err)
+	}
+
+	if len(containers) == 0 {
+		log.Info("Creating %s...", s.nextContainerName(containers, false))
+		container, err := s.CreateContainer(false, map[string]string{})
+		if err != nil {
+			return nil, fmt.Errorf("fail to create container: %v", err)
+		}
+		if err = s.StartContainer(container, nil, map[string]string{}); err != nil {
+			return nil, err
+		}
+		return []*Container{container}, nil
+	}
+
+	tuples := make([]*Container, 0, 10)
+	for _, c := range containers {
+		log.Info("Recreating %s...", c.Name)
+		container, err := s.RecreateContainer(c, map[string]string{})
+		if err != nil {
+			return nil, fmt.Errorf("fail to recreate container: %v", err)
+		}
+		tuples = append(tuples, container)
+	}
+	return tuples, nil
+}
+
+func (s *Service) StartOrCreateContainers() ([]*Container, error) {
+	containers, err := s.Containers(true, false)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get containers(%s): %v", s.name, err)
+	}
+
+	if len(containers) == 0 {
+		log.Info("Creating %s...", s.nextContainerName(containers, false))
+		container, err := s.CreateContainer(false, map[string]string{})
+		if err != nil {
+			return nil, fmt.Errorf("fail to create container: %v", err)
+		}
+		if err = s.StartContainer(container, nil, map[string]string{}); err != nil {
+			return nil, err
+		}
+		return []*Container{container}, nil
+	}
+
+	for _, c := range containers {
+		err = s.StartContainerIfStopped(c, map[string]string{})
+		if err != nil {
+			return nil, fmt.Errorf("fail to start container: %v", err)
+		}
+	}
+	return containers, nil
+}
+
+func (s *Service) Kill(options map[string]string) error {
+	containers, err := s.Containers(true, false)
+	if err != nil {
+		return fmt.Errorf("fail to get containers(%s): %v", s.name, err)
+	}
+
+	for _, c := range containers {
+		log.Info("Killing %s...", c.Name)
+		if err = c.Kill(); err != nil {
+			return fmt.Errorf("fail to kill container(%s): %v", c.Name, err)
+		}
+	}
+	return nil
+}
+
+// GetContainer returns a Container for this service.
+// The container must be active, and match `number`.
+func (s *Service) GetContainer(number int) (*Container, error) {
+	apiContainers, err := s.client.ListContainers(docker.ListContainersOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("fail to list containers: %v", err)
+	}
+
+	for _, apiContainer := range apiContainers {
+		if !s.HasApiContainer(&apiContainer, false) {
+			continue
+		}
+
+		_, _, containerNumber := base.ParseContainerName(base.GetApiContainerName(&apiContainer))
+		if containerNumber == number {
+			return NewContainerFromPs(s.client, &apiContainer), nil
+		}
+	}
+
+	return nil, fmt.Errorf("no container found for %s_%d", s.name, number)
+}
+
+// FIXME: insecure not used
+func (s *Service) Pull(insecure bool) error {
+	image, ok := s.options["image"].(string)
+	if !ok {
+		return nil
+	}
+
+	log.Info("Pulling %s (%s)...", s.name, image)
+	return s.client.PullImage(docker.PullImageOptions{Repository: image}, docker.AuthConfiguration{})
+}
+
+func (s *Service) Restart() error {
+	containers, err := s.Containers(false, false)
+	if err != nil {
+		return fmt.Errorf("fail to get containers(%s): %v", s.name, err)
+	}
+
+	for _, c := range containers {
+		log.Info("Restarting %s...", c.Name)
+		if err = c.Restart(); err != nil {
+			return fmt.Errorf("fail to restart container(%s): %v", c.Name, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) Stop() error {
+	containers, err := s.Containers(false, false)
+	if err != nil {
+		return fmt.Errorf("fail to get containers(%s): %v", s.name, err)
+	}
+
+	for _, c := range containers {
+		log.Info("Stopping %s...", c.Name)
+		if err = c.Stop(); err != nil {
+			return fmt.Errorf("fail to stop container(%s): %v", c.Name, err)
+		}
+	}
+	return nil
+}

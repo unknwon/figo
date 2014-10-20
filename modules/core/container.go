@@ -115,6 +115,8 @@ func (c *Container) Get(key string) interface{} {
 	switch key {
 	case "State.Running":
 		return c.State.Running
+	case "NetworkSettings.Ports":
+		return c.NetworkSettings.Ports
 	}
 	return nil
 }
@@ -123,4 +125,37 @@ func (c *Container) Get(key string) interface{} {
 func (c *Container) IsRunning() bool {
 	running, ok := c.Get("State.Running").(bool)
 	return ok && running
+}
+
+func (c *Container) Ports() map[docker.Port][]docker.PortBinding {
+	ports, ok := c.Get("NetworkSettings.Ports").(map[docker.Port][]docker.PortBinding)
+	if !ok {
+		return map[docker.Port][]docker.PortBinding{}
+	}
+	return ports
+}
+
+func (c *Container) Stop() error {
+	return c.client.StopContainer(c.ID, 60)
+}
+
+func (c *Container) Start() error {
+	return c.client.StartContainer(c.ID, &docker.HostConfig{})
+}
+
+func (c *Container) Wait() (int, error) {
+	return c.client.WaitContainer(c.ID)
+}
+
+func (c *Container) Kill() error {
+	return c.client.KillContainer(docker.KillContainerOptions{})
+}
+
+func (c *Container) GetLocalPort(port int, protocol string) string {
+	portBinding := c.Ports()[docker.Port(fmt.Sprintf("%d/%s", port, protocol))]
+	return fmt.Sprintf("%s:%s", portBinding[0].HostIp, portBinding[0].HostPort)
+}
+
+func (c *Container) Restart() error {
+	return c.client.RestartContainer(c.ID, 60)
 }
